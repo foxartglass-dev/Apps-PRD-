@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentOSDoc, BacklogItem, LinkHint } from '../types/agentos'
+import type { AgentOSDoc, BacklogItem, LinkHint, Section } from '../types/agentos'
 import { AGENT_OS_SECTION_LIST } from '../constants/agentOSSections'
 import { apiOutline, apiFeature } from '../services/api'
+import { apiRefineSection } from '../services/refine'
 import { downloadZip, downloadJson, downloadMarkdown, downloadCsv } from '../utils/export'
 import { saveLocal, loadLocal, saveSnapshot, listSnapshots, loadSnapshot } from '../utils/local'
+
+const BRIEF_KEY = 'prd_brief_v1'
 
 export default function Editor() {
   const [brief, setBrief] = useState('')
@@ -12,14 +15,20 @@ export default function Editor() {
   const [backlog, setBacklog] = useState<BacklogItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [toastError, setToastError] = useState<string | null>(null)
+  const [refiningSectionId, setRefiningSectionId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [snaps, setSnaps] = useState<{id:string;ts:number;title:string}[]>([])
 
   useEffect(() => {
-    const existing = loadLocal()
-    if (existing) {
-      setDoc(existing)
-      setBacklog(existing.backlog || [])
+    const existingDoc = loadLocal()
+    if (existingDoc) {
+      setDoc(existingDoc)
+      setBacklog(existingDoc.backlog || [])
+    }
+    const existingBrief = localStorage.getItem(BRIEF_KEY)
+    if (existingBrief) {
+      setBrief(existingBrief)
     }
     setSnaps(listSnapshots())
   }, [])
@@ -27,6 +36,11 @@ export default function Editor() {
   function persist(next: AgentOSDoc) {
     setDoc(next)
     saveLocal(next)
+  }
+
+  function handleBriefChange(value: string) {
+    setBrief(value)
+    localStorage.setItem(BRIEF_KEY, value)
   }
 
   async function onGenerate() {
@@ -46,6 +60,22 @@ export default function Editor() {
       const next = { ...(doc || { sections: [], backlog: [] }), backlog: [...backlog, f] }
       setBacklog(next.backlog); persist(next)
     } catch (e:any) { alert(e.message) }
+  }
+
+  async function onRefineSection(section: Section) {
+    if (refiningSectionId || !doc) return
+    setRefiningSectionId(section.id)
+    setToastError(null)
+    try {
+      const res = await apiRefineSection({ sectionId: section.id as any, currentMd: section.md, brief })
+      const updatedSections = doc.sections.map(s => s.id === res.sectionId ? { ...s, md: res.md } : s)
+      persist({ ...doc, sections: updatedSections })
+    } catch (e: any) {
+      setToastError(e.message || 'Refine failed')
+      setTimeout(() => setToastError(null), 4000)
+    } finally {
+      setRefiningSectionId(null)
+    }
   }
 
   function onSaveSnapshot() {
@@ -76,6 +106,11 @@ export default function Editor() {
 
   return (
     <div className="container mx-auto p-4 space-y-4">
+      {toastError && (
+        <div className="fixed bottom-4 right-4 bg-red-600 text-white p-3 rounded-lg shadow-lg z-50">
+          Error: {toastError}
+        </div>
+      )}
       <h1 className="text-xl font-semibold">PRD Genius — Agent-OS</h1>
 
       {/* Controls */}
@@ -100,7 +135,7 @@ export default function Editor() {
       {/* Brief */}
       <div className="border rounded p-3 space-y-2">
         <label className="block text-sm font-medium">Brief</label>
-        <textarea value={brief} onChange={e=>setBrief(e.target.value)} rows={5} className="w-full border rounded p-2" placeholder="Describe the product idea, goals, users, constraints..." />
+        <textarea value={brief} onChange={e=>handleBriefChange(e.target.value)} rows={5} className="w-full border rounded p-2" placeholder="Describe the product idea, goals, users, constraints..." />
         {error && <div className="text-red-600 text-sm">{error}</div>}
       </div>
 
@@ -111,9 +146,16 @@ export default function Editor() {
             <h2 className="font-semibold">Sections</h2>
             {AGENT_OS_SECTION_LIST.map(meta => {
               const s = doc.sections.find(x=>x.id===meta.id) || { id: meta.id, title: meta.title, md: '' }
+              const isRefiningThis = refiningSectionId === s.id
               return (
                 <div key={meta.id} className="border rounded p-3">
-                  <div className="font-medium mb-2">{s.title}</div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="font-medium">{s.title}</div>
+                    <button onClick={() => onRefineSection(s)} disabled={!!refiningSectionId} className="px-2 py-1 text-sm rounded border flex items-center gap-1 disabled:opacity-50">
+                      {isRefiningThis && <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></div>}
+                      Refine (AI)
+                    </button>
+                  </div>
                   <textarea
                     className="w-full border rounded p-2"
                     rows={8}

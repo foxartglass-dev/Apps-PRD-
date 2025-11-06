@@ -3,6 +3,7 @@ import express from 'express'
 import cors from 'cors'
 import { z } from 'zod'
 import { GoogleGenerativeAI } from '@google/generative-ai'
+import type { Request, Response } from 'express'
 
 const app = express()
 app.use(cors())
@@ -72,7 +73,7 @@ function model() {
 
 function parseJson(text: string) {
   try { return JSON.parse(text) } catch {
-    const m = text.match(/```json\\s*([\\s\\S]*?)```/i)
+    const m = text.match(/```json\s*([\s\S]*?)```/i)
     if (!m) throw new Error('Model did not return JSON')
     return JSON.parse(m[1])
   }
@@ -121,5 +122,29 @@ Return JSON now.`
   }
 })
 
+const RefineInput = z.object({
+  sectionId: z.enum(['mission','users','scope','non_goals','success','milestones','risks']),
+  currentMd: z.string().default(''),
+  brief: z.string().default('')
+})
+
+const SYS_REFINE = `You rewrite ONE section of an Agent-OS PRD.
+Input: { "sectionId":"scope","currentMd":"...","brief":"..." }
+Return STRICT JSON ONLY: { "sectionId":"scope","md":"<improved markdown>" }
+Rules: concise bullets, preserve intent, no prose outside JSON.`
+
+app.post('/api/ai/refineSection', async (req: Request, res: Response) => {
+  try {
+    const { sectionId, currentMd, brief } = RefineInput.parse(req.body)
+    const prompt = `${SYS_REFINE}\n\nInput:\n${JSON.stringify({ sectionId, currentMd, brief }, null, 2)}\n\nReturn JSON now.`
+    const resp = await model().generateContent(prompt)
+    const json = parseJson(resp.response.text())
+    const out = z.object({ sectionId: RefineInput.shape.sectionId, md: z.string() }).parse(json)
+    res.json(out)
+  } catch (e: any) {
+    res.status(400).json({ error: e.message || 'refine failed' })
+  }
+})
+
 const port = process.env.PORT || 8787
-app.listen(port, () => console.log(\`API listening on http://localhost:\${port}\`))
+app.listen(port, () => console.log(`API listening on http://localhost:${port}`))
