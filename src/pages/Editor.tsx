@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AgentOSDoc, BacklogItem, LinkHint } from '../types/agentos'
 import { AGENT_OS_SECTION_LIST } from '../constants/agentOSSections'
 import { apiOutline, apiFeature } from '../services/api'
+import { downloadZip, downloadJson, downloadMarkdown, downloadCsv } from '../utils/export'
+import { saveLocal, loadLocal, saveSnapshot, listSnapshots, loadSnapshot } from '../utils/local'
 
 export default function Editor() {
   const [brief, setBrief] = useState('')
@@ -10,12 +12,29 @@ export default function Editor() {
   const [backlog, setBacklog] = useState<BacklogItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [snaps, setSnaps] = useState<{id:string;ts:number;title:string}[]>([])
+
+  useEffect(() => {
+    const existing = loadLocal()
+    if (existing) {
+      setDoc(existing)
+      setBacklog(existing.backlog || [])
+    }
+    setSnaps(listSnapshots())
+  }, [])
+
+  function persist(next: AgentOSDoc) {
+    setDoc(next)
+    saveLocal(next)
+  }
 
   async function onGenerate() {
     setLoading(true); setError(null)
     try {
       const d = await apiOutline({ brief, links })
-      setDoc(d); setBacklog(d.backlog || [])
+      persist({ sections: d.sections, backlog: d.backlog || [] })
+      setBacklog(d.backlog || [])
     } catch (e:any) { setError(e.message) }
     finally { setLoading(false) }
   }
@@ -24,23 +43,68 @@ export default function Editor() {
     const t = prompt('Feature title?'); if (!t) return
     try {
       const f = await apiFeature({ title: t })
-      setBacklog(prev => [...prev, f])
+      const next = { ...(doc || { sections: [], backlog: [] }), backlog: [...backlog, f] }
+      setBacklog(next.backlog); persist(next)
     } catch (e:any) { alert(e.message) }
+  }
+
+  function onSaveSnapshot() {
+    if (!doc) return alert('Nothing to snapshot yet.')
+    const title = prompt('Snapshot title?', new Date().toLocaleString()) || new Date().toLocaleString()
+    saveSnapshot(doc, title)
+    setSnaps(listSnapshots())
+  }
+
+  function onLoadSnapshot(id: string) {
+    const next = loadSnapshot(id)
+    if (!next) return alert('Snapshot missing.')
+    setBacklog(next.backlog || [])
+    persist(next)
+  }
+
+  function onImportJson(file: File) {
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const next = JSON.parse(String(reader.result)) as AgentOSDoc
+        setBacklog(next.backlog || [])
+        persist(next)
+      } catch { alert('Invalid JSON file') }
+    }
+    reader.readAsText(file)
   }
 
   return (
     <div className="container mx-auto p-4 space-y-4">
       <h1 className="text-xl font-semibold">PRD Genius — Agent-OS</h1>
 
+      {/* Controls */}
+      <div className="flex flex-wrap gap-2">
+        <button onClick={onGenerate} disabled={loading || brief.trim().length<10} className="px-3 py-2 rounded bg-black text-white">
+          {loading ? 'Generating…' : 'Generate Blueprint'}
+        </button>
+        <button onClick={onAddFeatureAI} className="px-3 py-2 rounded border">+ Feature (AI)</button>
+        <button onClick={()=>doc && downloadZip(doc)} className="px-3 py-2 rounded border">Export ZIP</button>
+        <button onClick={()=>doc && downloadJson(doc)} className="px-3 py-2 rounded border">Export JSON</button>
+        <button onClick={()=>doc && downloadMarkdown(doc)} className="px-3 py-2 rounded border">Export MD</button>
+        <button onClick={()=>downloadCsv(backlog)} className="px-3 py-2 rounded border">Export CSV</button>
+        <button onClick={onSaveSnapshot} className="px-3 py-2 rounded border">Save Snapshot</button>
+        <label className="px-3 py-2 rounded border cursor-pointer">
+          Import JSON
+          <input ref={fileRef} type="file" accept="application/json" className="hidden"
+            onChange={e=>{ const f=e.target.files?.[0]; if(f) onImportJson(f); if(fileRef.current) fileRef.current.value='' }}
+          />
+        </label>
+      </div>
+
+      {/* Brief */}
       <div className="border rounded p-3 space-y-2">
         <label className="block text-sm font-medium">Brief</label>
-        <textarea value={brief} onChange={e=>setBrief(e.target.value)} rows={6} className="w-full border rounded p-2" placeholder="Describe the product idea, goals, users, constraints..." />
-        <button onClick={onGenerate} disabled={loading || brief.trim().length<10} className="px-3 py-2 rounded bg-black text-white">
-          {loading ? 'Generating…' : 'Generate Agent-OS Blueprint'}
-        </button>
+        <textarea value={brief} onChange={e=>setBrief(e.target.value)} rows={5} className="w-full border rounded p-2" placeholder="Describe the product idea, goals, users, constraints..." />
         {error && <div className="text-red-600 text-sm">{error}</div>}
       </div>
 
+      {/* Sections + Backlog */}
       {doc && (
         <div className="grid lg:grid-cols-2 gap-4">
           <div className="space-y-3">
@@ -55,9 +119,9 @@ export default function Editor() {
                     rows={8}
                     defaultValue={s.md}
                     onBlur={(e) => {
-                      if (!doc) return
-                      const updated = doc.sections.map(x => x.id===s.id ? { ...s, md: e.target.value } : x)
-                      setDoc({ ...doc, sections: updated })
+                      const updated = (doc?.sections || []).map(x => x.id===s.id ? { ...s, md: e.target.value } : x)
+                      const next = { ...(doc || { sections: [], backlog: [] }), sections: updated, backlog }
+                      persist(next)
                     }}
                   />
                 </div>
@@ -68,7 +132,7 @@ export default function Editor() {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold">Backlog</h2>
-              <button className="px-2 py-1 text-sm rounded border" onClick={onAddFeatureAI}>+ Add Feature (AI)</button>
+              <div className="text-sm text-gray-600">{backlog.length} items</div>
             </div>
             {backlog.length ? backlog.map((b,i)=>(
               <div key={i} className="border rounded p-3">
@@ -85,6 +149,21 @@ export default function Editor() {
           </div>
         </div>
       )}
+
+      {/* Snapshots */}
+      <div className="border rounded p-3">
+        <div className="font-semibold mb-2">Snapshots</div>
+        {snaps.length ? (
+          <ul className="text-sm space-y-1">
+            {snaps.map(s => (
+              <li key={s.id} className="flex items-center justify-between">
+                <span>{new Date(s.ts).toLocaleString()} — {s.title}</span>
+                <button className="px-2 py-1 border rounded" onClick={()=>onLoadSnapshot(s.id)}>Load</button>
+              </li>
+            ))}
+          </ul>
+        ) : <div className="text-sm text-gray-600">No snapshots yet.</div>}
+      </div>
     </div>
   )
 }
