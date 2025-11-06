@@ -1,9 +1,10 @@
 import 'dotenv/config'
-import express from 'express'
+// Fix: Use combined import for express and its types to resolve type errors.
+import express, { type Request, type Response } from 'express'
 import cors from 'cors'
 import { z } from 'zod'
-import { GoogleGenerativeAI } from '@google/generative-ai'
-import type { Request, Response } from 'express'
+// Fix: Update to the new Gemini SDK and types.
+import { GoogleGenAI } from '@google/genai'
 
 const app = express()
 app.use(cors())
@@ -64,12 +65,13 @@ Shape:
 }
 Keep 3–6 clear acceptance bullets.`
 
-function model() {
-  const key = process.env.GEMINI_API_KEY
-  if (!key) throw new Error('Missing GEMINI_API_KEY')
-  const genAI = new GoogleGenerativeAI(key)
-  return genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-1.5-flash' })
+// Fix: Update Gemini API initialization and usage according to new SDK guidelines.
+if (!process.env.API_KEY) {
+  throw new Error('API_KEY environment variable not set');
 }
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Fix: Use recommended model, as gemini-1.5-flash is deprecated.
+const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
 function parseJson(text: string) {
   try { return JSON.parse(text) } catch {
@@ -79,17 +81,25 @@ function parseJson(text: string) {
   }
 }
 
-app.post('/api/ai/outline', async (req, res) => {
+// Fix: Add explicit Request and Response types to handlers.
+app.post('/api/ai/outline', async (req: Request, res: Response) => {
   try {
     const { brief, links } = InputOutline.parse(req.body)
-    const prompt = `${SYS_OUTLINE}
-
-User Input:
+    const prompt = `User Input:
 ${JSON.stringify({ brief, links, requiredSections: SECTIONS.map(s=>s.id) }, null, 2)}
 
 Return JSON now.`
-    const resp = await model().generateContent(prompt)
-    const json = parseJson(resp.response.text())
+    // Fix: Use updated generateContent call.
+    const resp = await ai.models.generateContent({
+      model: modelName,
+      contents: prompt,
+      config: {
+        systemInstruction: SYS_OUTLINE,
+        responseMimeType: 'application/json'
+      }
+    })
+    // Fix: Use `response.text` to get the text response.
+    const json = parseJson(resp.text)
     const parsed = AgentOSDoc.parse(json)
     const normalized = {
       sections: SECTIONS.map(s => {
@@ -104,17 +114,25 @@ Return JSON now.`
   }
 })
 
-app.post('/api/ai/feature', async (req, res) => {
+// Fix: Add explicit Request and Response types to handlers.
+app.post('/api/ai/feature', async (req: Request, res: Response) => {
   try {
     const { title, context, constraints } = InputFeature.parse(req.body)
-    const prompt = `${SYS_FEATURE}
-
-Feature Pitch:
+    const prompt = `Feature Pitch:
 ${JSON.stringify({ title, context, constraints }, null, 2)}
 
 Return JSON now.`
-    const resp = await model().generateContent(prompt)
-    const json = parseJson(resp.response.text())
+    // Fix: Use updated generateContent call.
+    const resp = await ai.models.generateContent({
+      model: modelName,
+      contents: prompt,
+      config: {
+        systemInstruction: SYS_FEATURE,
+        responseMimeType: 'application/json'
+      }
+    })
+    // Fix: Use `response.text` to get the text response.
+    const json = parseJson(resp.text)
     const safe = BacklogItem.parse(json)
     res.json(safe)
   } catch (e:any) {
@@ -136,9 +154,18 @@ Rules: concise bullets, preserve intent, no prose outside JSON.`
 app.post('/api/ai/refineSection', async (req: Request, res: Response) => {
   try {
     const { sectionId, currentMd, brief } = RefineInput.parse(req.body)
-    const prompt = `${SYS_REFINE}\n\nInput:\n${JSON.stringify({ sectionId, currentMd, brief }, null, 2)}\n\nReturn JSON now.`
-    const resp = await model().generateContent(prompt)
-    const json = parseJson(resp.response.text())
+    const prompt = `Input:\n${JSON.stringify({ sectionId, currentMd, brief }, null, 2)}\n\nReturn JSON now.`
+    // Fix: Use updated generateContent call.
+    const resp = await ai.models.generateContent({
+      model: modelName,
+      contents: prompt,
+      config: {
+        systemInstruction: SYS_REFINE,
+        responseMimeType: 'application/json'
+      }
+    })
+    // Fix: Use `response.text` to get the text response.
+    const json = parseJson(resp.text)
     const out = z.object({ sectionId: RefineInput.shape.sectionId, md: z.string() }).parse(json)
     res.json(out)
   } catch (e: any) {
@@ -146,5 +173,45 @@ app.post('/api/ai/refineSection', async (req: Request, res: Response) => {
   }
 })
 
+const RiceInput = z.object({
+  title: z.string(),
+  context: z.string().optional()
+})
+
+const RiceResp = z.object({
+  R: z.number(),
+  I: z.number(),
+  C: z.number(),
+  E: z.number(),
+  score: z.number()
+})
+
+const SYS_RICE = `Given a feature and context, estimate RICE.
+Return JSON only: { "R":1|2|3|4|5, "I":1|2|3, "C":0.5|0.8|1.0, "E":1|2|3|4|5, "score": number }
+Score = (R*I*C)/E rounded to 1 decimal.`
+
+// Fix: Add explicit Request and Response types to handlers.
+app.post('/api/ai/rice', async (req: Request, res: Response) => {
+  try {
+    const { title, context } = RiceInput.parse(req.body)
+    const prompt = `Feature: ${title}\nContext: ${context ?? ''}`
+    // Fix: Use updated generateContent call.
+    const resp = await ai.models.generateContent({
+      model: modelName,
+      contents: prompt,
+      config: {
+        systemInstruction: SYS_RICE,
+        responseMimeType: 'application/json'
+      }
+    })
+    // Fix: Use `response.text` to get the text response.
+    const json = parseJson(resp.text)
+    const out = RiceResp.parse(json)
+    res.json(out)
+  } catch (e: any) {
+    res.status(400).json({ error: e.message || 'rice failed' })
+  }
+})
+
 const port = process.env.PORT || 8787
-app.listen(port, () => console.log(`API listening on http://localhost:${port}`))
+app.listen(port, () => console.log(`API listening on http://localhost:${port}`),)

@@ -3,6 +3,7 @@ import type { AgentOSDoc, BacklogItem, LinkHint, Section } from '../types/agento
 import { AGENT_OS_SECTION_LIST } from '../constants/agentOSSections'
 import { apiOutline, apiFeature } from '../services/api'
 import { apiRefineSection } from '../services/refine'
+import { apiRice } from '../services/ranking'
 import { downloadZip, downloadJson, downloadMarkdown, downloadCsv } from '../utils/export'
 import { saveLocal, loadLocal, saveSnapshot, listSnapshots, loadSnapshot } from '../utils/local'
 
@@ -17,6 +18,7 @@ export default function Editor() {
   const [error, setError] = useState<string | null>(null)
   const [toastError, setToastError] = useState<string | null>(null)
   const [refiningSectionId, setRefiningSectionId] = useState<string | null>(null)
+  const [scoringItemIndex, setScoringItemIndex] = useState<number | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [snaps, setSnaps] = useState<{id:string;ts:number;title:string}[]>([])
 
@@ -76,6 +78,34 @@ export default function Editor() {
     } finally {
       setRefiningSectionId(null)
     }
+  }
+
+  async function onScoreItem(item: BacklogItem, index: number) {
+    if (scoringItemIndex !== null) return
+    setScoringItemIndex(index)
+    setToastError(null)
+    try {
+      const riceScore = await apiRice({ title: item.title, context: brief })
+      const newBacklog = [...backlog]
+      newBacklog[index] = { ...newBacklog[index], rice: riceScore }
+      setBacklog(newBacklog)
+      persist({ ...(doc!), backlog: newBacklog })
+    } catch (e: any) {
+      setToastError(e.message || 'Scoring failed')
+      setTimeout(() => setToastError(null), 4000)
+    } finally {
+      setScoringItemIndex(null)
+    }
+  }
+
+  function onSortByRice() {
+    const sorted = [...backlog].sort((a, b) => {
+      const scoreA = a.rice?.score ?? -Infinity
+      const scoreB = b.rice?.score ?? -Infinity
+      return scoreB - scoreA
+    })
+    setBacklog(sorted)
+    persist({ ...(doc!), backlog: sorted })
   }
 
   function onSaveSnapshot() {
@@ -174,11 +204,25 @@ export default function Editor() {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold">Backlog</h2>
-              <div className="text-sm text-gray-600">{backlog.length} items</div>
+              <div className="flex items-center gap-2">
+                 <button onClick={onSortByRice} className="px-2 py-1 text-sm rounded border disabled:opacity-50" disabled={backlog.every(b => !b.rice)}>Sort by RICE</button>
+                <div className="text-sm text-gray-600">{backlog.length} items</div>
+              </div>
             </div>
-            {backlog.length ? backlog.map((b,i)=>(
+            {backlog.length ? backlog.map((b,i)=>{
+              const isScoringThis = scoringItemIndex === i;
+              return (
               <div key={i} className="border rounded p-3">
-                <div className="font-medium">{b.title}</div>
+                <div className="flex justify-between items-start mb-2">
+                  <div className="font-medium pr-2">
+                    {b.title}
+                    {b.rice && <span className="text-xs text-gray-400 ml-2 font-normal">· RICE: {b.rice.score.toFixed(1)}</span>}
+                  </div>
+                  <button onClick={() => onScoreItem(b, i)} disabled={scoringItemIndex !== null} className="text-xs px-2 py-1 border rounded flex items-center gap-1 disabled:opacity-50 whitespace-nowrap">
+                    {isScoringThis && <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></div>}
+                    Score (RICE)
+                  </button>
+                </div>
                 {b.problem && <p className="text-sm mt-1">{b.problem}</p>}
                 {b.outcome && <p className="text-sm mt-1 italic">{b.outcome}</p>}
                 {b.acceptance?.length ? (
@@ -187,7 +231,7 @@ export default function Editor() {
                   </ul>
                 ) : null}
               </div>
-            )) : <div className="text-sm text-gray-600">No features yet.</div>}
+            )}) : <div className="text-sm text-gray-600">No features yet.</div>}
           </div>
         </div>
       )}
