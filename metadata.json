@@ -1,0 +1,5 @@
+{
+  "name": "Idea Spec Studio",
+  "description": "A web app that turns messy app-idea brain dumps into structured specs for AI coding tools. It captures ideas, organizes them into products and features, and generates product plans and feature shape specs. Includes JSON export/import and customizable prompts.",
+  "requestFramePermissions": []
+}
