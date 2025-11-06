@@ -1,4 +1,4 @@
-import { saveAs } from 'file-saver'
+import * as FileSaver from 'file-saver'
 import JSZip from 'jszip'
 import { marked } from 'marked'
 import type { AgentOSDoc, BacklogItem } from '../types/agentos'
@@ -24,20 +24,20 @@ export async function downloadZip(doc: AgentOSDoc) {
   zip.file('README.md', toMarkdown(doc))
   zip.file('backlog.csv', toCSV(doc.backlog || []))
   const blob = await zip.generateAsync({ type: 'blob' })
-  saveAs(blob, 'prd.zip')
+  FileSaver.saveAs(blob, 'prd.zip')
 }
 
 export function downloadJson(doc: AgentOSDoc) {
   const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' })
-  saveAs(blob, 'prd.json')
+  FileSaver.saveAs(blob, 'prd.json')
 }
 
 export function downloadMarkdown(doc: AgentOSDoc) {
   const blob = new Blob([toMarkdown(doc)], { type: 'text/markdown' })
-  saveAs(blob, 'README.md')
+  FileSaver.saveAs(blob, 'README.md')
 }
 
 export function downloadCsv(backlog: BacklogItem[]) {
   const blob = new Blob([toCSV(backlog)], { type: 'text/csv' })
-  saveAs(blob, 'backlog.csv')
+  FileSaver.saveAs(blob, 'backlog.csv')
 }
