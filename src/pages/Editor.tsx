@@ -12,6 +12,7 @@ import { CogIcon } from '../components/icons/CogIcon'
 import { onInflight, createStopwatch } from '../services/http'
 import useAutoResize, { resizeTextarea } from '../hooks/useAutoResize'
 import FabScrollBottom from '../components/FabScrollBottom'
+import PromptComposer from '../components/PromptComposer'
 
 const BRIEF_KEY = 'prd_brief_v1'
 
@@ -31,6 +32,7 @@ export default function Editor() {
   const [snaps, setSnaps] = useState<{ id: string; ts: number; title: string }[]>([])
   const [config, setConfig] = useState(loadConfig());
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [showPromptComposer, setShowPromptComposer] = useState(false);
 
   const [inflightCount, setInflightCount] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -268,6 +270,7 @@ export default function Editor() {
            {isAddingFeature && <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>}
           + Feature (AI)
         </button>
+        <button onClick={() => setShowPromptComposer(true)} className="px-3 py-2 rounded border">Prompt Builder</button>
         <button onClick={expandAllTextareas} className="px-3 py-2 rounded border">Expand All</button>
         <button onClick={() => doc && downloadZip(doc)} className="px-3 py-2 rounded border">Export ZIP</button>
         <button onClick={() => doc && downloadJson(doc)} className="px-3 py-2 rounded border">Export JSON</button>
@@ -385,6 +388,9 @@ export default function Editor() {
         onClose={() => setIsSettingsOpen(false)}
         onConfigChange={handleConfigChange}
       />
+      {showPromptComposer && (
+        <PromptComposer brief={brief} onClose={()=>setShowPromptComposer(false)} />
+      )}
     </div>
   )
 }
