@@ -7,6 +7,11 @@ export type BacklogItem = {
   acceptance: string[];
   rice?: RiceScore;
 }
-export type AgentOSDoc = { sections: Section[]; backlog: BacklogItem[] }
+export type AgentOSDoc = { 
+  brief: string;
+  sections: Section[]; 
+  backlog: BacklogItem[];
+  features: { title: string; md: string; }[];
+}
 export type LinkHint = { label: string; url: string }
 export type OutlineInput = { brief: string; links?: LinkHint[] }

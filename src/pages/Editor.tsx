@@ -14,8 +14,7 @@ import useAutoResize, { resizeTextarea } from '../hooks/useAutoResize'
 import FabScrollBottom from '../components/FabScrollBottom'
 import PromptComposer from '../components/PromptComposer'
 import { getLastCallDetails } from '../services/aiClient'
-
-const BRIEF_KEY = 'prd_brief_v1'
+import { normalizeDoc, EMPTY_DOC } from '../services/shape'
 
 const fmt = (ms: number) => {
   const s = Math.floor(ms / 1000)
@@ -33,10 +32,8 @@ type CallLog = {
 };
 
 export default function Editor() {
-  const [brief, setBrief] = useState('')
+  const [doc, setDoc] = useState<AgentOSDoc>(EMPTY_DOC)
   const [links] = useState<LinkHint[]>([])
-  const [doc, setDoc] = useState<AgentOSDoc | null>(null)
-  const [backlog, setBacklog] = useState<BacklogItem[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
   const [snaps, setSnaps] = useState<{ id: string; ts: number; title: string }[]>([])
   const [config, setConfig] = useState(loadConfig());
@@ -62,15 +59,7 @@ export default function Editor() {
   useAutoResize('.autoresize');
 
   useEffect(() => {
-    const existingDoc = loadLocal()
-    if (existingDoc) {
-      setDoc(existingDoc)
-      setBacklog(existingDoc.backlog || [])
-    }
-    const existingBrief = localStorage.getItem(BRIEF_KEY)
-    if (existingBrief) {
-      setBrief(existingBrief)
-    }
+    setDoc(loadLocal())
     setSnaps(listSnapshots())
 
     const unsub = onInflight(n => {
@@ -96,8 +85,12 @@ export default function Editor() {
   }
 
   function handleBriefChange(value: string) {
-    setBrief(value)
-    localStorage.setItem(BRIEF_KEY, value)
+    setDoc(d => ({ ...d, brief: value }))
+  }
+
+  function handleBriefBlur(value: string) {
+    const next = { ...doc, brief: value };
+    saveLocal(next);
   }
 
   function showError(msg: string, details?: string, retry?: () => void) {
@@ -113,9 +106,8 @@ export default function Editor() {
         setToast(null);
         const start = Date.now();
         try {
-          const d = await apiOutline({ brief, links })
-          persist({ sections: d.sections, backlog: d.backlog || [] })
-          setBacklog(d.backlog || [])
+          const d = await apiOutline({ brief: doc.brief, links })
+          persist({ ...doc, sections: d.sections, backlog: d.backlog || [] })
           setLastCallLog({ started: start, duration: Date.now() - start, status: 'OK' });
         } catch (e: any) {
           const duration = Date.now() - start;
@@ -140,11 +132,9 @@ export default function Editor() {
         setToast(null);
         const start = Date.now();
         try {
-          const f = await apiFeature({ title: t, context: brief })
-          const currentDoc = doc || { sections: [], backlog: [] };
-          const newBacklog = [...(currentDoc.backlog || []), f];
-          const next = { ...currentDoc, backlog: newBacklog };
-          setBacklog(newBacklog); 
+          const f = await apiFeature({ title: t, context: doc.brief })
+          const newBacklog = [...(doc.backlog || []), f];
+          const next = { ...doc, backlog: newBacklog };
           persist(next);
           setLastCallLog({ started: start, duration: Date.now() - start, status: 'OK' });
         } catch (e: any) {
@@ -162,13 +152,13 @@ export default function Editor() {
   }
 
   async function onRefineSection(section: Section) {
-    if (refiningSectionId || !doc) return
+    if (refiningSectionId) return
     const handler = async () => {
       setRefiningSectionId(section.id)
       setToast(null);
       const start = Date.now();
       try {
-        const res = await apiRefineSection({ sectionId: section.id as any, currentMd: section.md, brief })
+        const res = await apiRefineSection({ sectionId: section.id as any, currentMd: section.md, brief: doc.brief })
         const updatedSections = doc.sections.map(s => s.id === res.sectionId ? { ...s, md: res.md } : s)
         persist({ ...doc, sections: updatedSections })
         setLastCallLog({ started: start, duration: Date.now() - start, status: 'OK' });
@@ -193,11 +183,10 @@ export default function Editor() {
         setToast(null);
         const start = Date.now();
         try {
-          const riceScore = await apiRice({ title: item.title, context: brief })
-          const newBacklog = [...backlog]
+          const riceScore = await apiRice({ title: item.title, context: doc.brief })
+          const newBacklog = [...doc.backlog]
           newBacklog[index] = { ...newBacklog[index], rice: riceScore }
-          setBacklog(newBacklog)
-          if (doc) persist({ ...doc, backlog: newBacklog })
+          persist({ ...doc, backlog: newBacklog })
           setLastCallLog({ started: start, duration: Date.now() - start, status: 'OK' });
         } catch (e: any) {
           const duration = Date.now() - start;
@@ -214,13 +203,12 @@ export default function Editor() {
   }
 
   function onSortByRice() {
-    const sorted = [...backlog].sort((a, b) => {
+    const sorted = [...doc.backlog].sort((a, b) => {
       const scoreA = a.rice?.score ?? -Infinity
       const scoreB = b.rice?.score ?? -Infinity
       return scoreB - scoreA
     })
-    setBacklog(sorted)
-    if (doc) persist({ ...doc, backlog: sorted })
+    persist({ ...doc, backlog: sorted })
   }
 
   function onSaveSnapshot() {
@@ -233,20 +221,20 @@ export default function Editor() {
   function onLoadSnapshot(id: string) {
     const next = loadSnapshot(id)
     if (!next) return alert('Snapshot missing.')
-    setBacklog(next.backlog || [])
     persist(next)
   }
 
-  function onImportJson(file: File) {
-    const reader = new FileReader()
-    reader.onload = () => {
-      try {
-        const next = JSON.parse(String(reader.result)) as AgentOSDoc
-        setBacklog(next.backlog || [])
-        persist(next)
-      } catch { alert('Invalid JSON file') }
+  async function onImportJson(file: File) {
+    try {
+      const text = await file.text()
+      const json = JSON.parse(text)
+      const normalized = normalizeDoc(json)
+      persist(normalized)
+      toastKeyRef.current += 1
+      setToast({ key: toastKeyRef.current, msg: 'Import successful' })
+    } catch (e:any) {
+      showError(`Import failed: ${e?.message || 'invalid file'}`)
     }
-    reader.readAsText(file)
   }
   
   const handleConfigChange = (newConfig: RuntimeConfig) => {
@@ -257,6 +245,8 @@ export default function Editor() {
     const nodes = document.querySelectorAll<HTMLTextAreaElement>('textarea.autoresize')
     nodes.forEach((el) => resizeTextarea(el))
   }
+  
+  const backlog = doc.backlog || [];
 
   return (
     <div className="container mx-auto p-4 space-y-4">
@@ -318,7 +308,7 @@ export default function Editor() {
 
       {/* Controls */}
       <div className="flex flex-wrap gap-2 items-center">
-        <button onClick={onGenerate} disabled={isGenerating || brief.trim().length < 10} className="px-3 py-2 rounded bg-indigo-600 text-white flex items-center gap-2 disabled:opacity-70">
+        <button onClick={onGenerate} disabled={isGenerating || (doc.brief || '').trim().length < 10} className="px-3 py-2 rounded bg-indigo-600 text-white flex items-center gap-2 disabled:opacity-70">
           {isGenerating && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>}
           {isGenerating ? 'Generating…' : 'Generate Blueprint'}
         </button>
@@ -328,6 +318,7 @@ export default function Editor() {
         </button>
         <button onClick={() => setShowPromptComposer(true)} className="px-3 py-2 rounded border">Prompt Builder</button>
         <button onClick={expandAllTextareas} className="px-3 py-2 rounded border">Expand All</button>
+        <button onClick={()=>{ if (confirm('Reset app state and reload?')) { localStorage.clear(); location.reload(); } }} className="px-3 py-2 rounded border">Reset</button>
         <div className="flex-1"></div>
         <div className="dropdown relative">
           <button className="px-3 py-2 rounded border">Export</button>
@@ -359,7 +350,7 @@ export default function Editor() {
       {/* Brief */}
       <div className="border rounded p-3 space-y-2 bg-gray-800 border-gray-700">
         <label className="block text-sm font-medium">Brief</label>
-        <textarea value={brief} onChange={e => handleBriefChange(e.target.value)} rows={5} className="w-full border rounded p-2 autoresize bg-gray-900 border-gray-600" placeholder="Describe the product idea, goals, users, constraints..." />
+        <textarea value={doc.brief} onChange={e => handleBriefChange(e.target.value)} onBlur={e => handleBriefBlur(e.target.value)} rows={5} className="w-full border rounded p-2 autoresize bg-gray-900 border-gray-600" placeholder="Describe the product idea, goals, users, constraints..." />
       </div>
 
       {/* Sections + Backlog */}
@@ -385,7 +376,7 @@ export default function Editor() {
                     defaultValue={s.md}
                     onBlur={(e) => {
                       const updated = (doc?.sections || []).map(x => x.id === s.id ? { ...s, md: e.target.value } : x)
-                      const next = { ...(doc || { sections: [], backlog: [] }), sections: updated, backlog }
+                      const next = { ...doc, sections: updated }
                       persist(next)
                     }}
                   />
@@ -451,7 +442,7 @@ export default function Editor() {
         onConfigChange={handleConfigChange}
       />
       {showPromptComposer && (
-        <PromptComposer brief={brief} onClose={()=>setShowPromptComposer(false)} />
+        <PromptComposer brief={doc.brief} onClose={()=>setShowPromptComposer(false)} />
       )}
     </div>
   )

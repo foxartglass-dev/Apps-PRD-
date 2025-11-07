@@ -1,7 +1,8 @@
 import 'dotenv/config'
 // Fix: Use express namespace for Request and Response to avoid conflicts with global DOM types.
 // Fix: Import Request and Response directly from express to resolve type conflicts.
-import express, { Request, Response } from 'express'
+// FIX: Changed import to default express to allow for explicit namespacing of Request and Response types, avoiding conflict with global DOM types.
+import express from 'express'
 import cors from 'cors'
 import { z } from 'zod'
 // Fix: Update to the new Gemini SDK and types.
@@ -83,7 +84,8 @@ function parseJson(text: string) {
 }
 
 // Fix: Add explicit Request and Response types to handlers to avoid conflicts with global DOM types.
-app.post('/api/ai/outline', async (req: Request, res: Response) => {
+// FIX: Use express.Request and express.Response to specify Express types and avoid conflicts.
+app.post('/api/ai/outline', async (req: express.Request, res: express.Response) => {
   try {
     const { brief, links } = InputOutline.parse(req.body)
     const prompt = `User Input:
@@ -116,7 +118,8 @@ Return JSON now.`
 })
 
 // Fix: Add explicit Request and Response types to handlers to avoid conflicts with global DOM types.
-app.post('/api/ai/feature', async (req: Request, res: Response) => {
+// FIX: Use express.Request and express.Response to specify Express types and avoid conflicts.
+app.post('/api/ai/feature', async (req: express.Request, res: express.Response) => {
   try {
     const { title, context, constraints } = InputFeature.parse(req.body)
     const prompt = `Feature Pitch:
@@ -153,7 +156,8 @@ Return STRICT JSON ONLY: { "sectionId":"scope","md":"<improved markdown>" }
 Rules: concise bullets, preserve intent, no prose outside JSON.`
 
 // Fix: Add explicit Request and Response types to handlers to avoid conflicts with global DOM types.
-app.post('/api/ai/refineSection', async (req: Request, res: Response) => {
+// FIX: Use express.Request and express.Response to specify Express types and avoid conflicts.
+app.post('/api/ai/refineSection', async (req: express.Request, res: express.Response) => {
   try {
     const { sectionId, currentMd, brief } = RefineInput.parse(req.body)
     const prompt = `Input:\n${JSON.stringify({ sectionId, currentMd, brief }, null, 2)}\n\nReturn JSON now.`
@@ -193,7 +197,8 @@ Return JSON only: { "R":1|2|3|4|5, "I":1|2|3, "C":0.5|0.8|1.0, "E":1|2|3|4|5, "s
 Score = (R*I*C)/E rounded to 1 decimal.`
 
 // Fix: Add explicit Request and Response types to handlers to avoid conflicts with global DOM types.
-app.post('/api/ai/rice', async (req: Request, res: Response) => {
+// FIX: Use express.Request and express.Response to specify Express types and avoid conflicts.
+app.post('/api/ai/rice', async (req: express.Request, res: express.Response) => {
   try {
     const { title, context } = RiceInput.parse(req.body)
     const prompt = `Feature: ${title}\nContext: ${context ?? ''}`
@@ -216,7 +221,8 @@ app.post('/api/ai/rice', async (req: Request, res: Response) => {
 })
 
 // Fix: Add explicit Request and Response types to handlers to avoid conflicts with global DOM types.
-app.get('/api/health', async (req: Request, res: Response) => {
+// FIX: Use express.Request and express.Response to specify Express types and avoid conflicts.
+app.get('/api/health', async (req: express.Request, res: express.Response) => {
   try {
     const resp = await ai.models.generateContent({model: modelName, contents: 'pong'})
     const text = resp.text ?? ''
