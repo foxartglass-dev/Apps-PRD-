@@ -31,10 +31,10 @@ export function SettingsDrawer({ isOpen, onClose, onConfigChange }: { isOpen: bo
 
   const handleStudioModeToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
     const isEnabled = e.target.checked;
-    if (window.confirm(`This will ${isEnabled ? 'enable' : 'disable'} Studio Mode and reload the page. Continue?`)) {
-      saveConfig({ ...config, studioMode: isEnabled });
-      window.location.reload();
-    }
+    const newConfig = { ...config, studioMode: isEnabled };
+    setConfig(newConfig); // Update local state for instant UI feedback
+    const saved = saveConfig(newConfig); // Persist to localStorage
+    onConfigChange(saved); // Propagate change up to parent
   };
 
   const onTestServer = async () => {
@@ -52,19 +52,24 @@ export function SettingsDrawer({ isOpen, onClose, onConfigChange }: { isOpen: bo
   const onTestStudio = async () => {
     setTestStudioResult({ status: 'testing' });
     try {
-        const hasKey = await (window as any).aistudio?.hasSelectedApiKey();
-        if (!hasKey) {
-            throw new Error('No API key selected in AI Studio. Please select one using the key icon in the header.');
+        // In AI Studio, the API key is automatically provided via process.env.API_KEY.
+        // The window.aistudio.hasSelectedApiKey() check is for specific APIs (like Veo) and not needed here.
+        if (!process.env.API_KEY) {
+            throw new Error("API key not found in environment. Please ensure it's configured in AI Studio.");
         }
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: 'ping' });
-        if (response.text.trim()) {
+        if (response.text?.trim()) {
             setTestStudioResult({ status: 'pass', message: `OK: ${response.text.trim()}` });
         } else {
             throw new Error('Empty response from model.');
         }
     } catch (e: any) {
-        setTestStudioResult({ status: 'fail', message: e.message });
+        let message = e.message;
+        if (message.includes("API key not valid")) {
+            message = "The provided API key is not valid. Please check your AI Studio project configuration and ensure the Gemini API is enabled.";
+        }
+        setTestStudioResult({ status: 'fail', message });
     }
   };
 

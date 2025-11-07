@@ -9,6 +9,7 @@ import { saveLocal, loadLocal, saveSnapshot, listSnapshots, loadSnapshot } from 
 import { loadConfig, type RuntimeConfig } from '../config/runtime'
 import { SettingsDrawer } from '../components/SettingsDrawer'
 import { CogIcon } from '../components/icons/CogIcon'
+import { onInflight } from '../services/http'
 
 
 const BRIEF_KEY = 'prd_brief_v1'
@@ -18,15 +19,19 @@ export default function Editor() {
   const [links] = useState<LinkHint[]>([])
   const [doc, setDoc] = useState<AgentOSDoc | null>(null)
   const [backlog, setBacklog] = useState<BacklogItem[]>([])
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [toastError, setToastError] = useState<string | null>(null)
-  const [refiningSectionId, setRefiningSectionId] = useState<string | null>(null)
-  const [scoringItemIndex, setScoringItemIndex] = useState<number | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [snaps, setSnaps] = useState<{id:string;ts:number;title:string}[]>([])
   const [config, setConfig] = useState(loadConfig());
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  const [inflightCount, setInflightCount] = useState(0);
+  const [lastAction, setLastAction] = useState<{ action: () => void } | null>(null);
+
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [refiningSectionId, setRefiningSectionId] = useState<string | null>(null)
+  const [scoringItemIndex, setScoringItemIndex] = useState<number | null>(null)
 
 
   useEffect(() => {
@@ -40,6 +45,9 @@ export default function Editor() {
       setBrief(existingBrief)
     }
     setSnaps(listSnapshots())
+
+    const unsub = onInflight(setInflightCount);
+    return unsub;
   }, [])
 
   function persist(next: AgentOSDoc) {
@@ -52,36 +60,54 @@ export default function Editor() {
     localStorage.setItem(BRIEF_KEY, value)
   }
 
+  const handleRetry = () => {
+    if (lastAction) {
+      setToastError(null);
+      setLastAction(null);
+      lastAction.action();
+    }
+  }
+
   async function onGenerate() {
-    setLoading(true); setError(null)
+    setIsGenerating(true); setError(null); setToastError(null); setLastAction(null);
     try {
       const d = await apiOutline({ brief, links })
       persist({ sections: d.sections, backlog: d.backlog || [] })
       setBacklog(d.backlog || [])
-    } catch (e:any) { setError(e.message) }
-    finally { setLoading(false) }
+    } catch (e:any) { 
+      setToastError("Request timed out or failed.")
+      setLastAction({ action: onGenerate })
+    }
+    finally { setIsGenerating(false) }
   }
 
   async function onAddFeatureAI() {
     const t = prompt('Feature title?'); if (!t) return
-    try {
-      const f = await apiFeature({ title: t })
-      const next = { ...(doc || { sections: [], backlog: [] }), backlog: [...backlog, f] }
-      setBacklog(next.backlog); persist(next)
-    } catch (e:any) { alert(e.message) }
+    setToastError(null); setLastAction(null);
+    const action = async () => {
+        try {
+          const f = await apiFeature({ title: t, context: brief })
+          const next = { ...(doc || { sections: [], backlog: [] }), backlog: [...backlog, f] }
+          setBacklog(next.backlog); persist(next)
+        } catch (e:any) { 
+            setToastError('Request timed out or failed.');
+            setLastAction({ action });
+        }
+    }
+    action();
   }
 
   async function onRefineSection(section: Section) {
     if (refiningSectionId || !doc) return
     setRefiningSectionId(section.id)
-    setToastError(null)
+    setToastError(null); setLastAction(null);
     try {
       const res = await apiRefineSection({ sectionId: section.id as any, currentMd: section.md, brief })
       const updatedSections = doc.sections.map(s => s.id === res.sectionId ? { ...s, md: res.md } : s)
       persist({ ...doc, sections: updatedSections })
     } catch (e: any) {
-      setToastError(e.message || 'Refine failed')
-      setTimeout(() => setToastError(null), 4000)
+      setToastError('Request timed out or failed.')
+      setLastAction({ action: () => onRefineSection(section) })
     } finally {
       setRefiningSectionId(null)
     }
@@ -90,7 +116,7 @@ export default function Editor() {
   async function onScoreItem(item: BacklogItem, index: number) {
     if (scoringItemIndex !== null) return
     setScoringItemIndex(index)
-    setToastError(null)
+    setToastError(null); setLastAction(null);
     try {
       const riceScore = await apiRice({ title: item.title, context: brief })
       const newBacklog = [...backlog]
@@ -98,8 +124,8 @@ export default function Editor() {
       setBacklog(newBacklog)
       persist({ ...(doc!), backlog: newBacklog })
     } catch (e: any) {
-      setToastError(e.message || 'Scoring failed')
-      setTimeout(() => setToastError(null), 4000)
+      setToastError('Request timed out or failed.')
+      setLastAction({ action: () => onScoreItem(item, index) })
     } finally {
       setScoringItemIndex(null)
     }
@@ -147,20 +173,27 @@ export default function Editor() {
 
   return (
     <div className="container mx-auto p-4 space-y-4">
+      {inflightCount > 0 && (
+          <div className="fixed top-0 left-0 right-0 h-1 bg-primary animate-pulse"></div>
+      )}
       {toastError && (
-        <div className="fixed bottom-4 right-4 bg-red-600 text-white p-3 rounded-lg shadow-lg z-50">
-          Error: {toastError}
+        <div className="fixed bottom-4 right-4 bg-red-600 text-white p-3 rounded-lg shadow-lg z-50 flex items-center gap-4">
+          <span>{toastError}</span>
+          {lastAction && (
+              <button onClick={handleRetry} className="px-3 py-1 bg-white/20 rounded hover:bg-white/30">Retry</button>
+          )}
+          <button onClick={() => { setToastError(null); setLastAction(null); }} className="font-bold text-lg">&times;</button>
         </div>
       )}
       <h1 className="text-xl font-semibold">PRD Genius — Agent-OS</h1>
 
       {/* Controls */}
       <div className="flex flex-wrap gap-2 items-center">
-        <button onClick={onGenerate} disabled={loading || brief.trim().length<10} className="px-3 py-2 rounded bg-black text-white">
-          {loading ? 'Generating…' : 'Generate Blueprint'}
+        <button onClick={onGenerate} disabled={isGenerating || brief.trim().length<10} className="px-3 py-2 rounded bg-black text-white flex items-center gap-2 disabled:opacity-70">
+          {isGenerating && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>}
+          {isGenerating ? 'Generating…' : 'Generate Blueprint'}
         </button>
         <button onClick={onAddFeatureAI} className="px-3 py-2 rounded border">+ Feature (AI)</button>
-        {/* Fix: `downloadZip` expects 1 argument, but was called with 2. The `brief` is not needed. */}
         <button onClick={()=>doc && downloadZip(doc)} className="px-3 py-2 rounded border">Export ZIP</button>
         <button onClick={()=>doc && downloadJson(doc)} className="px-3 py-2 rounded border">Export JSON</button>
         <button onClick={()=>doc && downloadMarkdown(doc)} className="px-3 py-2 rounded border">Export MD</button>

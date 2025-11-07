@@ -1,6 +1,8 @@
 import 'dotenv/config'
-// Fix: Import express default export and Request/Response types to resolve type errors.
-import express, { Request, Response } from 'express'
+// Fix: Aliased Request and Response to avoid conflicts with global DOM types.
+// FIX: Split express import into value and type imports to resolve type conflicts.
+import express from 'express'
+import type { Request as ExpressRequest, Response as ExpressResponse } from 'express'
 import cors from 'cors'
 import { z } from 'zod'
 // Fix: Update to the new Gemini SDK and types.
@@ -82,7 +84,7 @@ function parseJson(text: string) {
 }
 
 // Fix: Add explicit Request and Response types to handlers.
-app.post('/api/ai/outline', async (req: Request, res: Response) => {
+app.post('/api/ai/outline', async (req: ExpressRequest, res: ExpressResponse) => {
   try {
     const { brief, links } = InputOutline.parse(req.body)
     const prompt = `User Input:
@@ -115,7 +117,7 @@ Return JSON now.`
 })
 
 // Fix: Add explicit Request and Response types to handlers.
-app.post('/api/ai/feature', async (req: Request, res: Response) => {
+app.post('/api/ai/feature', async (req: ExpressRequest, res: ExpressResponse) => {
   try {
     const { title, context, constraints } = InputFeature.parse(req.body)
     const prompt = `Feature Pitch:
@@ -151,7 +153,7 @@ Input: { "sectionId":"scope","currentMd":"...","brief":"..." }
 Return STRICT JSON ONLY: { "sectionId":"scope","md":"<improved markdown>" }
 Rules: concise bullets, preserve intent, no prose outside JSON.`
 
-app.post('/api/ai/refineSection', async (req: Request, res: Response) => {
+app.post('/api/ai/refineSection', async (req: ExpressRequest, res: ExpressResponse) => {
   try {
     const { sectionId, currentMd, brief } = RefineInput.parse(req.body)
     const prompt = `Input:\n${JSON.stringify({ sectionId, currentMd, brief }, null, 2)}\n\nReturn JSON now.`
@@ -191,7 +193,7 @@ Return JSON only: { "R":1|2|3|4|5, "I":1|2|3, "C":0.5|0.8|1.0, "E":1|2|3|4|5, "s
 Score = (R*I*C)/E rounded to 1 decimal.`
 
 // Fix: Add explicit Request and Response types to handlers.
-app.post('/api/ai/rice', async (req: Request, res: Response) => {
+app.post('/api/ai/rice', async (req: ExpressRequest, res: ExpressResponse) => {
   try {
     const { title, context } = RiceInput.parse(req.body)
     const prompt = `Feature: ${title}\nContext: ${context ?? ''}`
@@ -213,7 +215,7 @@ app.post('/api/ai/rice', async (req: Request, res: Response) => {
   }
 })
 
-app.get('/api/health', async (req: Request, res: Response) => {
+app.get('/api/health', async (req: ExpressRequest, res: ExpressResponse) => {
   try {
     const resp = await ai.models.generateContent({model: modelName, contents: 'pong'})
     const text = resp.text ?? ''
