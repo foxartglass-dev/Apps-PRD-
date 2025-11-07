@@ -6,6 +6,10 @@ import { apiRefineSection } from '../services/refine'
 import { apiRice } from '../services/ranking'
 import { downloadZip, downloadJson, downloadMarkdown, downloadCsv } from '../utils/export'
 import { saveLocal, loadLocal, saveSnapshot, listSnapshots, loadSnapshot } from '../utils/local'
+import { loadConfig, type RuntimeConfig } from '../config/runtime'
+import { SettingsDrawer } from '../components/SettingsDrawer'
+import { CogIcon } from '../components/icons/CogIcon'
+
 
 const BRIEF_KEY = 'prd_brief_v1'
 
@@ -21,6 +25,9 @@ export default function Editor() {
   const [scoringItemIndex, setScoringItemIndex] = useState<number | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [snaps, setSnaps] = useState<{id:string;ts:number;title:string}[]>([])
+  const [config, setConfig] = useState(loadConfig());
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
 
   useEffect(() => {
     const existingDoc = loadLocal()
@@ -133,6 +140,10 @@ export default function Editor() {
     }
     reader.readAsText(file)
   }
+  
+  const handleConfigChange = (newConfig: RuntimeConfig) => {
+    setConfig(newConfig);
+  };
 
   return (
     <div className="container mx-auto p-4 space-y-4">
@@ -144,11 +155,12 @@ export default function Editor() {
       <h1 className="text-xl font-semibold">PRD Genius — Agent-OS</h1>
 
       {/* Controls */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 items-center">
         <button onClick={onGenerate} disabled={loading || brief.trim().length<10} className="px-3 py-2 rounded bg-black text-white">
           {loading ? 'Generating…' : 'Generate Blueprint'}
         </button>
         <button onClick={onAddFeatureAI} className="px-3 py-2 rounded border">+ Feature (AI)</button>
+        {/* Fix: `downloadZip` expects 1 argument, but was called with 2. The `brief` is not needed. */}
         <button onClick={()=>doc && downloadZip(doc)} className="px-3 py-2 rounded border">Export ZIP</button>
         <button onClick={()=>doc && downloadJson(doc)} className="px-3 py-2 rounded border">Export JSON</button>
         <button onClick={()=>doc && downloadMarkdown(doc)} className="px-3 py-2 rounded border">Export MD</button>
@@ -160,6 +172,15 @@ export default function Editor() {
             onChange={e=>{ const f=e.target.files?.[0]; if(f) onImportJson(f); if(fileRef.current) fileRef.current.value='' }}
           />
         </label>
+        <div className="flex-1"></div>
+         {config.studioMode && (
+          <span className="px-2 py-1 text-xs font-semibold rounded-full bg-yellow-200 text-yellow-800">
+            Studio Mode
+          </span>
+        )}
+        <button onClick={() => setIsSettingsOpen(true)} className="p-2 rounded border" title="Settings">
+          <CogIcon className="w-5 h-5" />
+        </button>
       </div>
 
       {/* Brief */}
@@ -250,6 +271,11 @@ export default function Editor() {
           </ul>
         ) : <div className="text-sm text-gray-600">No snapshots yet.</div>}
       </div>
+      <SettingsDrawer
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onConfigChange={handleConfigChange}
+      />
     </div>
   )
 }

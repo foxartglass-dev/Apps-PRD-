@@ -1,6 +1,6 @@
 import 'dotenv/config'
-// Fix: Use combined import for express and its types to resolve type errors.
-import express, { type Request, type Response } from 'express'
+// Fix: Import express default export and Request/Response types to resolve type errors.
+import express, { Request, Response } from 'express'
 import cors from 'cors'
 import { z } from 'zod'
 // Fix: Update to the new Gemini SDK and types.
@@ -210,6 +210,26 @@ app.post('/api/ai/rice', async (req: Request, res: Response) => {
     res.json(out)
   } catch (e: any) {
     res.status(400).json({ error: e.message || 'rice failed' })
+  }
+})
+
+app.get('/api/health', async (req: Request, res: Response) => {
+  try {
+    const resp = await ai.models.generateContent({model: modelName, contents: 'pong'})
+    const text = resp.text ?? ''
+    res.json({
+      ok: true,
+      model: modelName,
+      sample: (text || 'ok').slice(0, 20),
+      configured: {
+        supabase: !!process.env.VITE_SUPABASE_URL && !!process.env.VITE_SUPABASE_ANON_KEY,
+        square: !!process.env.VITE_SQUARE_APP_ID && !!process.env.VITE_SQUARE_LOCATION_ID,
+        authGoogle: !!process.env.VITE_AUTH_GOOGLE_CLIENT_ID && !!process.env.VITE_AUTH_GOOGLE_CLIENT_SECRET,
+        authEmail: process.env.VITE_AUTH_EMAIL_ENABLED === '1'
+      }
+    })
+  } catch (e:any) {
+    res.status(500).json({ ok: false, error: e?.message || 'health failed' })
   }
 })
 
