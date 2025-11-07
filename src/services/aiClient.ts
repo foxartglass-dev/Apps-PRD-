@@ -14,6 +14,13 @@ type AIClient = {
   rice(input: { title: string; context?: string }): Promise<RiceResp>
 }
 
+// Module-scope variable for diagnostics
+let lastCallDetails: { rawText?: string; parseError?: string } = {};
+
+export function getLastCallDetails() {
+  return lastCallDetails;
+}
+
 // --- Server Backend ---
 const serverBackend: AIClient = {
   async outline(input: OutlineInput): Promise<OutlineResp> {
@@ -91,25 +98,32 @@ Score = (R*I*C)/E rounded to 1 decimal.`;
 
 
 function parseJson(text: string) {
-    try { return JSON.parse(text); } catch {
-      const m = text.match(/```json\s*([\s\S]*?)```/i);
-      if (!m) {
+    lastCallDetails = { rawText: text, parseError: undefined }; // Reset on new attempt
+    try {
         const firstBrace = text.indexOf('{');
         const lastBrace = text.lastIndexOf('}');
         if (firstBrace !== -1 && lastBrace > firstBrace) {
-          try {
             return JSON.parse(text.substring(firstBrace, lastBrace + 1));
-          } catch (e) {
-            // fall through to error
-          }
         }
-        throw new Error('Model did not return valid JSON');
-      }
-      return JSON.parse(m[1]);
+        throw new Error("No JSON object found in response");
+    } catch (e: any) {
+        const m = text.match(/```json\s*([\s\S]*?)```/i);
+        if (m) {
+            try {
+                return JSON.parse(m[1]);
+            } catch (e2: any) {
+                // Fall through to final error
+            }
+        }
+        
+        const parseError = e.message || 'Unknown parsing error';
+        lastCallDetails.parseError = parseError;
+        const error: any = new Error(`Failed to parse JSON response. ${parseError}`);
+        error.name = 'ParseError';
+        error.rawText = text;
+        throw error;
     }
 }
-
-const modelName = 'gemini-2.5-flash';
 
 const getStudioRuntime = () => {
     const gm = (globalThis as any)?.google?.ai?.generativeLanguage ?? (globalThis as any)?.ai;
@@ -122,57 +136,73 @@ const getStudioRuntime = () => {
     return gm;
 };
 
-
 const studioBackend: AIClient = {
     async outline(input: OutlineInput): Promise<OutlineResp> {
         const runtime = getStudioRuntime();
+        const config = loadConfig();
         const prompt = `User Input:
 ${JSON.stringify({ brief: input.brief, links: input.links, requiredSections: AGENT_OS_SECTION_LIST.map(s => s.id) }, null, 2)}
 
 Return JSON now.`;
+        
+        const modelConfig: any = { systemInstruction: SYS_OUTLINE, responseMimeType: 'application/json' };
+        if (config.temperature !== undefined) modelConfig.temperature = config.temperature;
+        if (config.maxTokens !== undefined) modelConfig.maxOutputTokens = config.maxTokens;
+        
         const resp = await runtime.models.generateContent({
-            model: modelName,
+            model: config.modelId || 'gemini-2.5-flash',
             contents: prompt,
-            config: { systemInstruction: SYS_OUTLINE, responseMimeType: 'application/json' }
+            config: modelConfig
         });
-        const json = parseJson(resp.text);
-        return json;
+        return parseJson(resp.text);
     },
     async feature(title: string, brief: string): Promise<FeatureResp> {
         const runtime = getStudioRuntime();
+        const config = loadConfig();
         const prompt = `Feature Pitch:
 ${JSON.stringify({ title, context: brief }, null, 2)}
 
 Return JSON now.`;
+        const modelConfig: any = { systemInstruction: SYS_FEATURE, responseMimeType: 'application/json' };
+        if (config.temperature !== undefined) modelConfig.temperature = config.temperature;
+        if (config.maxTokens !== undefined) modelConfig.maxOutputTokens = config.maxTokens;
+
         const resp = await runtime.models.generateContent({
-            model: modelName,
+            model: config.modelId || 'gemini-2.5-flash',
             contents: prompt,
-            config: { systemInstruction: SYS_FEATURE, responseMimeType: 'application/json' }
+            config: modelConfig
         });
-        const json = parseJson(resp.text);
-        return json;
+        return parseJson(resp.text);
     },
     async refineSection(input): Promise<RefineResp> {
         const runtime = getStudioRuntime();
+        const config = loadConfig();
         const prompt = `Input:\n${JSON.stringify(input, null, 2)}\n\nReturn JSON now.`;
+        const modelConfig: any = { systemInstruction: SYS_REFINE, responseMimeType: 'application/json' };
+        if (config.temperature !== undefined) modelConfig.temperature = config.temperature;
+        if (config.maxTokens !== undefined) modelConfig.maxOutputTokens = config.maxTokens;
+
         const resp = await runtime.models.generateContent({
-            model: modelName,
+            model: config.modelId || 'gemini-2.5-flash',
             contents: prompt,
-            config: { systemInstruction: SYS_REFINE, responseMimeType: 'application/json' }
+            config: modelConfig
         });
-        const json = parseJson(resp.text);
-        return json;
+        return parseJson(resp.text);
     },
     async rice(input): Promise<RiceResp> {
         const runtime = getStudioRuntime();
+        const config = loadConfig();
         const prompt = `Feature: ${input.title}\nContext: ${input.context ?? ''}`;
+        const modelConfig: any = { systemInstruction: SYS_RICE, responseMimeType: 'application/json' };
+        if (config.temperature !== undefined) modelConfig.temperature = config.temperature;
+        if (config.maxTokens !== undefined) modelConfig.maxOutputTokens = config.maxTokens;
+
         const resp = await runtime.models.generateContent({
-            model: modelName,
+            model: config.modelId || 'gemini-2.5-flash',
             contents: prompt,
-            config: { systemInstruction: SYS_RICE, responseMimeType: 'application/json' }
+            config: modelConfig
         });
-        const json = parseJson(resp.text);
-        return json;
+        return parseJson(resp.text);
     }
 };
 

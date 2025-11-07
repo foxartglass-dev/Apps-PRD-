@@ -13,6 +13,7 @@ import { onInflight, createStopwatch } from '../services/http'
 import useAutoResize, { resizeTextarea } from '../hooks/useAutoResize'
 import FabScrollBottom from '../components/FabScrollBottom'
 import PromptComposer from '../components/PromptComposer'
+import { getLastCallDetails } from '../services/aiClient'
 
 const BRIEF_KEY = 'prd_brief_v1'
 
@@ -22,6 +23,14 @@ const fmt = (ms: number) => {
   const ss = String(s % 60).padStart(2, '0')
   return `${m}:${ss}`
 }
+
+type CallLog = {
+    started: number;
+    duration: number;
+    status: 'OK' | 'Fail';
+    error?: string;
+    rawText?: string;
+};
 
 export default function Editor() {
   const [brief, setBrief] = useState('')
@@ -45,6 +54,10 @@ export default function Editor() {
   const [isAddingFeature, setIsAddingFeature] = useState(false);
   const [refiningSectionId, setRefiningSectionId] = useState<string | null>(null)
   const [scoringItemIndex, setScoringItemIndex] = useState<number | null>(null)
+  
+  const [lastCallLog, setLastCallLog] = useState<CallLog | null>(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+
 
   useAutoResize('.autoresize');
 
@@ -98,14 +111,19 @@ export default function Editor() {
     const handler = async () => {
         setIsGenerating(true);
         setToast(null);
+        const start = Date.now();
         try {
           const d = await apiOutline({ brief, links })
           persist({ sections: d.sections, backlog: d.backlog || [] })
           setBacklog(d.backlog || [])
+          setLastCallLog({ started: start, duration: Date.now() - start, status: 'OK' });
         } catch (e: any) {
+          const duration = Date.now() - start;
           const m = String(e?.message || e);
           const det = (e?.stack || '') as string;
-          showError(m.includes('timeout') ? `Timeout after ${fmt(elapsedMs)}` : m, det, handler);
+          const rawText = e.name === 'ParseError' ? getLastCallDetails().rawText : undefined;
+          setLastCallLog({ started: start, duration, status: 'Fail', error: m, rawText });
+          showError(m, det, handler);
         } finally {
           setIsGenerating(false)
         }
@@ -120,6 +138,7 @@ export default function Editor() {
     const handler = async () => {
         setIsAddingFeature(true);
         setToast(null);
+        const start = Date.now();
         try {
           const f = await apiFeature({ title: t, context: brief })
           const currentDoc = doc || { sections: [], backlog: [] };
@@ -127,10 +146,14 @@ export default function Editor() {
           const next = { ...currentDoc, backlog: newBacklog };
           setBacklog(newBacklog); 
           persist(next);
+          setLastCallLog({ started: start, duration: Date.now() - start, status: 'OK' });
         } catch (e: any) {
+            const duration = Date.now() - start;
             const m = String(e?.message || e);
             const det = (e?.stack || '') as string;
-            showError(m.includes('timeout') ? `Timeout after ${fmt(elapsedMs)}` : m, det, handler);
+            const rawText = e.name === 'ParseError' ? getLastCallDetails().rawText : undefined;
+            setLastCallLog({ started: start, duration, status: 'Fail', error: m, rawText });
+            showError(m, det, handler);
         } finally {
             setIsAddingFeature(false);
         }
@@ -143,14 +166,19 @@ export default function Editor() {
     const handler = async () => {
       setRefiningSectionId(section.id)
       setToast(null);
+      const start = Date.now();
       try {
         const res = await apiRefineSection({ sectionId: section.id as any, currentMd: section.md, brief })
         const updatedSections = doc.sections.map(s => s.id === res.sectionId ? { ...s, md: res.md } : s)
         persist({ ...doc, sections: updatedSections })
+        setLastCallLog({ started: start, duration: Date.now() - start, status: 'OK' });
       } catch (e: any) {
+        const duration = Date.now() - start;
         const m = String(e?.message || e);
         const det = (e?.stack || '') as string;
-        showError(m.includes('timeout') ? `Timeout after ${fmt(elapsedMs)}` : m, det, handler);
+        const rawText = e.name === 'ParseError' ? getLastCallDetails().rawText : undefined;
+        setLastCallLog({ started: start, duration, status: 'Fail', error: m, rawText });
+        showError(m, det, handler);
       } finally {
         setRefiningSectionId(null)
       }
@@ -163,16 +191,21 @@ export default function Editor() {
     const handler = async () => {
         setScoringItemIndex(index)
         setToast(null);
+        const start = Date.now();
         try {
           const riceScore = await apiRice({ title: item.title, context: brief })
           const newBacklog = [...backlog]
           newBacklog[index] = { ...newBacklog[index], rice: riceScore }
           setBacklog(newBacklog)
-          persist({ ...(doc!), backlog: newBacklog })
+          if (doc) persist({ ...doc, backlog: newBacklog })
+          setLastCallLog({ started: start, duration: Date.now() - start, status: 'OK' });
         } catch (e: any) {
+          const duration = Date.now() - start;
           const m = String(e?.message || e);
           const det = (e?.stack || '') as string;
-          showError(m.includes('timeout') ? `Timeout after ${fmt(elapsedMs)}` : m, det, handler);
+          const rawText = e.name === 'ParseError' ? getLastCallDetails().rawText : undefined;
+          setLastCallLog({ started: start, duration, status: 'Fail', error: m, rawText });
+          showError(m, det, handler);
         } finally {
           setScoringItemIndex(null)
         }
@@ -187,7 +220,7 @@ export default function Editor() {
       return scoreB - scoreA
     })
     setBacklog(sorted)
-    persist({ ...(doc!), backlog: sorted })
+    if (doc) persist({ ...doc, backlog: sorted })
   }
 
   function onSaveSnapshot() {
@@ -259,10 +292,33 @@ export default function Editor() {
         </div>
       )}
       <h1 className="text-xl font-semibold">PRD Genius — Agent-OS</h1>
+      
+      {/* Diagnostics */}
+      <div className="border rounded-lg p-2 text-xs bg-gray-800 border-gray-700">
+        <details onToggle={(e) => setShowDiagnostics(e.currentTarget.open)}>
+          <summary className="cursor-pointer font-medium text-gray-300">Diagnostics</summary>
+          <div className="mt-2 space-y-2 text-gray-400">
+            <div><strong>Model:</strong> {config.modelId || 'gemini-2.5-flash'} / Temp: {config.temperature ?? 'default'} / MaxTokens: {config.maxTokens ?? 'default'}</div>
+            {lastCallLog && (
+              <div>
+                <strong>Last Call:</strong> {new Date(lastCallLog.started).toLocaleTimeString()} ({lastCallLog.duration}ms) - 
+                <span className={lastCallLog.status === 'OK' ? 'text-green-400' : 'text-red-400'}> {lastCallLog.status}</span>
+                {lastCallLog.status === 'Fail' && <span className="text-red-400 ml-2 truncate">: {lastCallLog.error}</span>}
+              </div>
+            )}
+            {lastCallLog?.rawText && (
+              <details className="mt-1">
+                <summary className="cursor-pointer text-yellow-400">Show raw model text</summary>
+                <pre className="whitespace-pre-wrap bg-black p-2 rounded mt-1 max-h-60 overflow-auto font-mono text-xs">{lastCallLog.rawText.slice(0, 4096)}</pre>
+              </details>
+            )}
+          </div>
+        </details>
+      </div>
 
       {/* Controls */}
       <div className="flex flex-wrap gap-2 items-center">
-        <button onClick={onGenerate} disabled={isGenerating || brief.trim().length < 10} className="px-3 py-2 rounded bg-black text-white flex items-center gap-2 disabled:opacity-70">
+        <button onClick={onGenerate} disabled={isGenerating || brief.trim().length < 10} className="px-3 py-2 rounded bg-indigo-600 text-white flex items-center gap-2 disabled:opacity-70">
           {isGenerating && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>}
           {isGenerating ? 'Generating…' : 'Generate Blueprint'}
         </button>
@@ -272,10 +328,16 @@ export default function Editor() {
         </button>
         <button onClick={() => setShowPromptComposer(true)} className="px-3 py-2 rounded border">Prompt Builder</button>
         <button onClick={expandAllTextareas} className="px-3 py-2 rounded border">Expand All</button>
-        <button onClick={() => doc && downloadZip(doc)} className="px-3 py-2 rounded border">Export ZIP</button>
-        <button onClick={() => doc && downloadJson(doc)} className="px-3 py-2 rounded border">Export JSON</button>
-        <button onClick={() => doc && downloadMarkdown(doc)} className="px-3 py-2 rounded border">Export MD</button>
-        <button onClick={() => downloadCsv(backlog)} className="px-3 py-2 rounded border">Export CSV</button>
+        <div className="flex-1"></div>
+        <div className="dropdown relative">
+          <button className="px-3 py-2 rounded border">Export</button>
+          <div className="dropdown-menu absolute hidden right-0 mt-2 p-2 bg-gray-800 border border-gray-700 rounded shadow-lg w-40">
+            <a onClick={() => doc && downloadZip(doc)} className="block px-2 py-1 hover:bg-gray-700 rounded">Export ZIP</a>
+            <a onClick={() => doc && downloadJson(doc)} className="block px-2 py-1 hover:bg-gray-700 rounded">Export JSON</a>
+            <a onClick={() => doc && downloadMarkdown(doc)} className="block px-2 py-1 hover:bg-gray-700 rounded">Export MD</a>
+            <a onClick={() => downloadCsv(backlog)} className="block px-2 py-1 hover:bg-gray-700 rounded">Export Backlog CSV</a>
+          </div>
+        </div>
         <button onClick={onSaveSnapshot} className="px-3 py-2 rounded border">Save Snapshot</button>
         <label className="px-3 py-2 rounded border cursor-pointer">
           Import JSON
@@ -283,7 +345,6 @@ export default function Editor() {
             onChange={e => { const f = e.target.files?.[0]; if (f) onImportJson(f); if (fileRef.current) fileRef.current.value = '' }}
           />
         </label>
-        <div className="flex-1"></div>
         {config.studioMode && (
           <span className="px-2 py-1 text-xs font-semibold rounded-full bg-yellow-200 text-yellow-800">
             Studio Mode
@@ -293,11 +354,12 @@ export default function Editor() {
           <CogIcon className="w-5 h-5" />
         </button>
       </div>
+      <style>{`.dropdown:hover .dropdown-menu { display: block; }`}</style>
 
       {/* Brief */}
-      <div className="border rounded p-3 space-y-2">
+      <div className="border rounded p-3 space-y-2 bg-gray-800 border-gray-700">
         <label className="block text-sm font-medium">Brief</label>
-        <textarea value={brief} onChange={e => handleBriefChange(e.target.value)} rows={5} className="w-full border rounded p-2 autoresize" placeholder="Describe the product idea, goals, users, constraints..." />
+        <textarea value={brief} onChange={e => handleBriefChange(e.target.value)} rows={5} className="w-full border rounded p-2 autoresize bg-gray-900 border-gray-600" placeholder="Describe the product idea, goals, users, constraints..." />
       </div>
 
       {/* Sections + Backlog */}
@@ -309,7 +371,7 @@ export default function Editor() {
               const s = doc.sections.find(x => x.id === meta.id) || { id: meta.id, title: meta.title, md: '' }
               const isRefiningThis = refiningSectionId === s.id
               return (
-                <div key={meta.id} className="border rounded p-3">
+                <div key={meta.id} className="border rounded p-3 bg-gray-800 border-gray-700">
                   <div className="flex items-center justify-between mb-2">
                     <div className="font-medium">{s.title}</div>
                     <button onClick={() => onRefineSection(s)} disabled={!!refiningSectionId} className="px-2 py-1 text-sm rounded border flex items-center gap-1 disabled:opacity-50">
@@ -318,7 +380,7 @@ export default function Editor() {
                     </button>
                   </div>
                   <textarea
-                    className="w-full border rounded p-2 autoresize"
+                    className="w-full border rounded p-2 autoresize bg-gray-900 border-gray-600"
                     rows={8}
                     defaultValue={s.md}
                     onBlur={(e) => {
@@ -337,13 +399,13 @@ export default function Editor() {
               <h2 className="font-semibold">Backlog</h2>
               <div className="flex items-center gap-2">
                 <button onClick={onSortByRice} className="px-2 py-1 text-sm rounded border disabled:opacity-50" disabled={backlog.every(b => !b.rice)}>Sort by RICE</button>
-                <div className="text-sm text-gray-600">{backlog.length} items</div>
+                <div className="text-sm text-gray-400">{backlog.length} items</div>
               </div>
             </div>
             {backlog.length ? backlog.map((b, i) => {
               const isScoringThis = scoringItemIndex === i;
               return (
-                <div key={i} className="border rounded p-3">
+                <div key={i} className="border rounded p-3 bg-gray-800 border-gray-700">
                   <div className="flex justify-between items-start mb-2">
                     <div className="font-medium pr-2">
                       {b.title}
@@ -354,23 +416,23 @@ export default function Editor() {
                       Score (RICE)
                     </button>
                   </div>
-                  {b.problem && <p className="text-sm mt-1">{b.problem}</p>}
-                  {b.outcome && <p className="text-sm mt-1 italic">{b.outcome}</p>}
+                  {b.problem && <p className="text-sm mt-1 text-gray-300">{b.problem}</p>}
+                  {b.outcome && <p className="text-sm mt-1 italic text-gray-400">{b.outcome}</p>}
                   {b.acceptance?.length ? (
-                    <ul className="list-disc ml-6 text-sm mt-2">
+                    <ul className="list-disc ml-6 text-sm mt-2 text-gray-300">
                       {b.acceptance.map((a, j) => <li key={j}>{a}</li>)}
                     </ul>
                   ) : null}
                 </div>
               )
-            }) : <div className="text-sm text-gray-600">No features yet.</div>}
+            }) : <div className="text-sm text-gray-400">No features yet.</div>}
           </div>
         </div>
       )}
 
       {/* Snapshots */}
       <div id="combined-export-anchor" />
-      <div className="border rounded p-3">
+      <div className="border rounded p-3 bg-gray-800 border-gray-700">
         <div className="font-semibold mb-2">Snapshots</div>
         {snaps.length ? (
           <ul className="text-sm space-y-1">
@@ -381,7 +443,7 @@ export default function Editor() {
               </li>
             ))}
           </ul>
-        ) : <div className="text-sm text-gray-600">No snapshots yet.</div>}
+        ) : <div className="text-sm text-gray-400">No snapshots yet.</div>}
       </div>
       <SettingsDrawer
         isOpen={isSettingsOpen}

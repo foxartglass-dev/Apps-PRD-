@@ -1,5 +1,8 @@
 export type RuntimeConfig = {
   studioMode: boolean
+  modelId?: string // e.g., 'gemini-2.5-flash' | 'gemini-2.5-pro'
+  temperature?: number
+  maxTokens?: number
   supabaseUrl?: string
   supabaseAnonKey?: string
   squareAppId?: string
@@ -21,6 +24,9 @@ function readEnv(): Partial<RuntimeConfig> {
   
   return {
     studioMode: e.VITE_STUDIO_MODE === '1',
+    modelId: e.VITE_GEMINI_MODEL,
+    temperature: e.VITE_TEMPERATURE ? parseFloat(e.VITE_TEMPERATURE) : undefined,
+    maxTokens: e.VITE_MAX_TOKENS ? parseInt(e.VITE_MAX_TOKENS, 10) : undefined,
     supabaseUrl: e.VITE_SUPABASE_URL,
     supabaseAnonKey: e.VITE_SUPABASE_ANON_KEY,
     squareAppId: e.VITE_SQUARE_APP_ID,
@@ -37,15 +43,21 @@ export function loadConfig(): RuntimeConfig {
     const lsStored = localStorage.getItem(LS_KEY);
     const ls = lsStored ? JSON.parse(lsStored) : {};
     
-    // In non-studio mode, env vars take precedence.
-    if (!base.studioMode && !ls.studioMode) {
-        return { ...ls, ...base, studioMode: false };
+    const merged = { ...base, ...ls };
+    
+    // Default model if not set
+    if (!merged.modelId) {
+      merged.modelId = 'gemini-2.5-flash';
     }
-    // In studio mode, ls settings override env vars.
-    return { ...base, ...ls, studioMode: true };
+    
+    // Studio mode is determined by the last explicit setting in localStorage,
+    // otherwise it falls back to the environment variable.
+    merged.studioMode = ls.studioMode !== undefined ? ls.studioMode : base.studioMode ?? false;
+
+    return merged;
 
   } catch { 
-    return { ...base, studioMode: base.studioMode ?? false } 
+    return { ...base, studioMode: base.studioMode ?? false, modelId: base.modelId ?? 'gemini-2.5-flash' } 
   }
 }
 
