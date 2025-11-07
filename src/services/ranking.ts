@@ -8,5 +8,5 @@ export type RiceRespT = z.infer<typeof RiceResp>
 
 export async function apiRice(input: { title: string; context?: string }): Promise<RiceRespT> {
   const ai = await getAI();
-  return withTimeout(() => ai.rice(input));
+  return withTimeout(() => ai.rice(input), 30000);
 }

@@ -19,18 +19,38 @@ export class TimeoutError extends Error {
   }
 }
 
-export async function withTimeout<T>(fn: () => Promise<T>, ms = 30000): Promise<T> {
-  const timeoutPromise = new Promise<T>((_, reject) => {
-    const id = setTimeout(() => {
-      clearTimeout(id);
-      reject(new TimeoutError(`Request timed out after ${ms}ms`));
-    }, ms);
+export async function withTimeout<T>(fn: () => Promise<T>, ms: number): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`timeout:${ms}`)), ms);
   });
 
+  bump(+1);
   try {
-    bump(+1);
-    return await Promise.race([fn(), timeoutPromise]);
+    const result = await Promise.race([fn(), timeoutPromise]);
+    clearTimeout(timeoutId);
+    return result;
+  } catch (e) {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    throw e;
   } finally {
     bump(-1);
+  }
+}
+
+
+/** Stopwatch helper: returns { stop, subscribe } for elapsed ms */
+export function createStopwatch() {
+  let start = Date.now()
+  let int: any = null
+  let ms = 0
+  const listeners = new Set<(ms:number)=>void>()
+  const tick = () => { ms = Date.now() - start; listeners.forEach(l=>l(ms)) }
+  int = setInterval(tick, 250)
+  return {
+    subscribe(fn:(ms:number)=>void){ listeners.add(fn); fn(ms); return ()=>listeners.delete(fn) },
+    stop(){ if(int){ clearInterval(int); int=null } return ms }
   }
 }

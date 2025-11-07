@@ -1,6 +1,5 @@
-import { GoogleGenAI } from '@google/genai';
 import { loadConfig } from '../config/runtime';
-import type { AgentOSDoc, BacklogItem, LinkHint, OutlineInput } from '../types/agentos';
+import type { AgentOSDoc, BacklogItem, OutlineInput } from '../types/agentos';
 import { AGENT_OS_SECTION_LIST } from '../constants/agentOSSections';
 
 export type OutlineResp = AgentOSDoc;
@@ -112,21 +111,26 @@ function parseJson(text: string) {
 
 const modelName = 'gemini-2.5-flash';
 
-const getStudioAI = () => {
-    if (!process.env.API_KEY) {
-        throw new Error("Studio runtime not available in this environment. API_KEY not found.");
+const getStudioRuntime = () => {
+    const gm = (globalThis as any)?.google?.ai?.generativeLanguage ?? (globalThis as any)?.ai;
+    if (!gm) {
+        throw new Error('Studio runtime not available in this environment.');
     }
-    return new GoogleGenAI({ apiKey: process.env.API_KEY });
-}
+    if (!gm.models?.generateContent) {
+        throw new Error('Studio runtime does not have the expected `models.generateContent` method.');
+    }
+    return gm;
+};
+
 
 const studioBackend: AIClient = {
     async outline(input: OutlineInput): Promise<OutlineResp> {
-        const ai = getStudioAI();
+        const runtime = getStudioRuntime();
         const prompt = `User Input:
 ${JSON.stringify({ brief: input.brief, links: input.links, requiredSections: AGENT_OS_SECTION_LIST.map(s => s.id) }, null, 2)}
 
 Return JSON now.`;
-        const resp = await ai.models.generateContent({
+        const resp = await runtime.models.generateContent({
             model: modelName,
             contents: prompt,
             config: { systemInstruction: SYS_OUTLINE, responseMimeType: 'application/json' }
@@ -135,12 +139,12 @@ Return JSON now.`;
         return json;
     },
     async feature(title: string, brief: string): Promise<FeatureResp> {
-        const ai = getStudioAI();
+        const runtime = getStudioRuntime();
         const prompt = `Feature Pitch:
 ${JSON.stringify({ title, context: brief }, null, 2)}
 
 Return JSON now.`;
-        const resp = await ai.models.generateContent({
+        const resp = await runtime.models.generateContent({
             model: modelName,
             contents: prompt,
             config: { systemInstruction: SYS_FEATURE, responseMimeType: 'application/json' }
@@ -149,9 +153,9 @@ Return JSON now.`;
         return json;
     },
     async refineSection(input): Promise<RefineResp> {
-        const ai = getStudioAI();
+        const runtime = getStudioRuntime();
         const prompt = `Input:\n${JSON.stringify(input, null, 2)}\n\nReturn JSON now.`;
-        const resp = await ai.models.generateContent({
+        const resp = await runtime.models.generateContent({
             model: modelName,
             contents: prompt,
             config: { systemInstruction: SYS_REFINE, responseMimeType: 'application/json' }
@@ -160,9 +164,9 @@ Return JSON now.`;
         return json;
     },
     async rice(input): Promise<RiceResp> {
-        const ai = getStudioAI();
+        const runtime = getStudioRuntime();
         const prompt = `Feature: ${input.title}\nContext: ${input.context ?? ''}`;
-        const resp = await ai.models.generateContent({
+        const resp = await runtime.models.generateContent({
             model: modelName,
             contents: prompt,
             config: { systemInstruction: SYS_RICE, responseMimeType: 'application/json' }
@@ -175,7 +179,7 @@ Return JSON now.`;
 let client: AIClient | null = null;
 
 export async function getAI(): Promise<AIClient> {
-    if (client) return client;
+    // Re-evaluate every time in case Studio Mode was toggled
     const config = loadConfig();
     client = config.studioMode ? studioBackend : serverBackend;
     return client;

@@ -10,5 +10,5 @@ export type RefineRespT = z.infer<typeof RefineResp>
 
 export async function apiRefineSection(input: { sectionId: RefineRespT['sectionId']; currentMd: string; brief: string }): Promise<RefineRespT> {
   const ai = await getAI();
-  return withTimeout(() => ai.refineSection(input));
+  return withTimeout(() => ai.refineSection(input), 60000);
 }

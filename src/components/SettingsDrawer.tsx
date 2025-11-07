@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { GoogleGenAI } from '@google/genai';
 import { loadConfig, saveConfig, RuntimeConfig } from '../config/runtime';
 
 type TestResult = { status: 'idle' | 'testing' | 'pass' | 'fail'; message?: string };
@@ -52,13 +51,13 @@ export function SettingsDrawer({ isOpen, onClose, onConfigChange }: { isOpen: bo
   const onTestStudio = async () => {
     setTestStudioResult({ status: 'testing' });
     try {
-        // In AI Studio, the API key is automatically provided via process.env.API_KEY.
-        // The window.aistudio.hasSelectedApiKey() check is for specific APIs (like Veo) and not needed here.
-        if (!process.env.API_KEY) {
-            throw new Error("API key not found in environment. Please ensure it's configured in AI Studio.");
+        const gm = (globalThis as any)?.google?.ai?.generativeLanguage ?? (globalThis as any)?.ai;
+        if (!gm || !gm.models?.generateContent) {
+            throw new Error('Studio runtime not available in this environment.');
         }
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: 'ping' });
+        
+        const response = await gm.models.generateContent({ model: 'gemini-2.5-flash', contents: 'ping' });
+        
         if (response.text?.trim()) {
             setTestStudioResult({ status: 'pass', message: `OK: ${response.text.trim()}` });
         } else {
@@ -109,7 +108,7 @@ export function SettingsDrawer({ isOpen, onClose, onConfigChange }: { isOpen: bo
           {activeTab === 'backends' && (
             <div className="space-y-4">
               <h3 className="font-semibold">Backend Services <span className="text-xs text-text-secondary">(for deployment)</span></h3>
-              <p className="text-xs text-text-secondary">These settings are saved locally and only used when Studio Mode is ON.</p>
+              <p className="text-xs text-text-secondary">These settings are saved locally and only used when Studio Mode is OFF.</p>
               
               <details className="space-y-2 border border-border rounded-lg p-3" open>
                 <summary className="font-medium text-sm cursor-pointer">Supabase</summary>
